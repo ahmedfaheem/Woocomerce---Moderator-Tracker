@@ -4,7 +4,7 @@ Plugin Name: Moderator Activity Tracker
 Plugin URI: --
 Description: Tracks moderator activity in WordPress.
 Version: 1.1
-Author: Charoon
+Author: Ahmed Faheem
 Author URI: --
 */
 
