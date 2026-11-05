@@ -1,4 +1,4 @@
-﻿<?php
+<?php
 /*
 Plugin Name: Moderator Activity Tracker
 Plugin URI: --
