@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 /*
 Plugin Name: Moderator Activity Tracker
 Plugin URI: --
@@ -1309,10 +1309,23 @@ function mat_upsell_report_page() {
         wp_die(__('You do not have sufficient permissions.'));
     }
     global $wpdb;
+
+    // ── Handle delete actions (before any output) ──────────────────────────
+    if (isset($_POST['mat_upsell_nonce'])) {
+        check_admin_referer('mat_upsell_delete', 'mat_upsell_nonce');
+        if (current_user_can('manage_options')) {
+            $table = $wpdb->prefix . 'moderator_upsell';
+            if (! empty($_POST['mat_upsell_del_row'])) {
+                $wpdb->delete($table, ['id' => intval($_POST['mat_upsell_del_row'])], ['%d']);
+            } elseif (! empty($_POST['mat_upsell_del_order'])) {
+                $wpdb->delete($table, ['order_id' => intval($_POST['mat_upsell_del_order'])], ['%d']);
+            }
+        }
+    }
+
     $f      = mat_upsell_read_filters();
     $rows   = mat_upsell_fetch($f);
     $labels = mat_all_status_labels();
-    $mods   = $wpdb->get_results("SELECT DISTINCT user_id, user_name FROM {$wpdb->prefix}moderator_upsell ORDER BY user_name");
 
     // Aggregate per moderator
     $sum = [];
@@ -1331,14 +1344,20 @@ function mat_upsell_report_page() {
     $total_net = 0;
     foreach ($sum as $s) $total_net += $s['added'] + $s['removed'];
 
-    $per_page = 50;
-    $page     = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
-    $total    = count($rows);
-    $pages    = (int) ceil($total / $per_page);
-    $slice    = array_slice($rows, ($page - 1) * $per_page, $per_page);
+    // ── Group rows by order_id, paginate by order ──────────────────────────
+    $by_order = [];
+    foreach ($rows as $r) {
+        $by_order[$r->order_id][] = $r;
+    }
+    $order_ids      = array_keys($by_order);
+    $total_orders   = count($order_ids);
+    $orders_pp      = 20;
+    $page           = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+    $pages          = (int) ceil($total_orders / $orders_pp);
+    $page_order_ids = array_slice($order_ids, ($page - 1) * $orders_pp, $orders_pp);
 
-    $base_args = ['page' => 'moderator-upsell', 'uid' => $f['uid'] ?: '', 'q' => $f['q'], 'start' => $f['start'], 'end' => $f['end'],
-                  'order' => $f['order'] ?: '', 'ostatus' => $f['status']];
+    $base_args  = ['page' => 'moderator-upsell', 'uid' => $f['uid'] ?: '', 'q' => $f['q'], 'start' => $f['start'], 'end' => $f['end'],
+                   'order' => $f['order'] ?: '', 'ostatus' => $f['status']];
     $export_url = wp_nonce_url(add_query_arg(array_merge($base_args, ['mat_export' => 1]), admin_url('admin.php')), 'mat_upsell_export');
     ?>
     <style>
@@ -1376,49 +1395,64 @@ function mat_upsell_report_page() {
         .mat-ac-name{font-size:12px;color:#787c82}
         .mat-ac-email{font-size:11px;color:#2271b1;margin-top:1px;margin-right:36px;text-align:right;direction:ltr}
         @media(max-width:700px){.mu-page{margin-left:12px}}
+        /* ── Order accordion cards ── */
+        .mu-order-card{border:1px solid #dcdcde;border-radius:8px;margin-bottom:10px;overflow:hidden;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+        .mu-order-summary{display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;user-select:none;background:#fafafa;border-bottom:1px solid transparent;flex-wrap:wrap}
+        .mu-order-card.open .mu-order-summary{border-bottom-color:#dcdcde;background:#f0f4fb}
+        .mu-order-toggle{font-size:14px;color:#787c82;transition:transform .2s;display:inline-block;line-height:1;flex-shrink:0}
+        .mu-order-card.open .mu-order-toggle{transform:rotate(90deg)}
+        .mu-order-id{font-weight:700;font-size:14px;color:#2271b1;text-decoration:none}
+        .mu-order-meta{font-size:12px;color:#50575e}
+        .mu-order-net{font-weight:700;font-size:13px}
+        .mu-order-body{display:none;overflow-x:auto}
+        .mu-order-card.open .mu-order-body{display:block}
+        .mu-del-btn{height:28px;padding:0 10px;border-radius:5px;border:1px solid #d63638;background:#fcebeb;color:#b32d2e;cursor:pointer;font-size:12px;white-space:nowrap;line-height:28px}
+        .mu-del-btn:hover{background:#d63638;color:#fff}
+        .mu-del-all-btn{height:28px;padding:0 10px;border-radius:5px;border:1px solid #d63638;background:#d63638;color:#fff;cursor:pointer;font-size:12px;white-space:nowrap;margin-right:auto}
+        .mu-del-all-btn:hover{background:#b32d2e;border-color:#b32d2e}
     </style>
 
     <div class="mu-page">
-        <h1>تقرير الـ Upsell</h1>
-        <div class="mu-sub">ما أضافه أو عدّله أو حذفه كل مشرف على الطلبات (بيانات فقط — بدون حساب عمولة). الطلبات التي ينشئها المشرف يدوياً لا تُحتسب.</div>
+        <h1>&#1578;&#1602;&#1585;&#1610;&#1585; &#1575;&#1604;&#1600; Upsell</h1>
+        <div class="mu-sub">&#1605;&#1575; &#1571;&#1590;&#1575;&#1601;&#1607; &#1571;&#1608; &#1593;&#1583;&#1617;&#1604;&#1607; &#1571;&#1608; &#1581;&#1584;&#1601;&#1607; &#1603;&#1604; &#1605;&#1588;&#1585;&#1601; &#1593;&#1604;&#1609; &#1575;&#1604;&#1591;&#1604;&#1576;&#1575;&#1578; (&#1576;&#1610;&#1575;&#1606;&#1575;&#1578; &#1601;&#1602;&#1591; &mdash; &#1576;&#1583;&#1608;&#1606; &#1581;&#1587;&#1575;&#1576; &#1593;&#1605;&#1608;&#1604;&#1577;). &#1575;&#1604;&#1591;&#1604;&#1576;&#1575;&#1578; &#1575;&#1604;&#1578;&#1610; &#1610;&#1606;&#1588;&#1574;&#1607;&#1575; &#1575;&#1604;&#1605;&#1588;&#1585;&#1601; &#1610;&#1583;&#1608;&#1610;&#1575;&#1611; &#1604;&#1575; &#1578;&#1615;&#1581;&#1578;&#1587;&#1576;.</div>
 
         <div class="mu-card">
-            <div class="mu-card-h">فلترة التقرير</div>
+            <div class="mu-card-h">&#1601;&#1604;&#1578;&#1585;&#1577; &#1575;&#1604;&#1578;&#1602;&#1585;&#1610;&#1585;</div>
             <div class="mu-card-b">
                 <form method="get" class="mu-filters">
                     <input type="hidden" name="page" value="moderator-upsell">
-                    <div><label>المشرف / المستخدم</label>
+                    <div><label>&#1575;&#1604;&#1605;&#1588;&#1585;&#1601; / &#1575;&#1604;&#1605;&#1587;&#1578;&#1582;&#1583;&#1605;</label>
                         <input type="hidden" id="mu_uid" name="uid" value="<?php echo esc_attr($f['uid'] ?: ''); ?>">
                         <input type="text" id="mu_user" name="q" value="<?php echo esc_attr($f['q']); ?>"
-                               placeholder="ابحث بالاسم أو اسم المستخدم أو البريد..." autocomplete="off" style="min-width:260px"></div>
-                    <div><label>من تاريخ</label><input type="date" name="start" value="<?php echo esc_attr($f['start']); ?>"></div>
-                    <div><label>إلى تاريخ</label><input type="date" name="end" value="<?php echo esc_attr($f['end']); ?>"></div>
-                    <div><label>رقم الطلب</label><input type="text" name="order" value="<?php echo esc_attr($f['order'] ?: ''); ?>" style="width:110px"></div>
-                    <div><label>الحالة الحالية للطلب</label>
+                               placeholder="&#1575;&#1576;&#1581;&#1579; &#1576;&#1575;&#1604;&#1575;&#1587;&#1605; &#1571;&#1608; &#1575;&#1587;&#1605; &#1575;&#1604;&#1605;&#1587;&#1578;&#1582;&#1583;&#1605; &#1571;&#1608; &#1575;&#1604;&#1576;&#1585;&#1610;&#1583;..." autocomplete="off" style="min-width:260px"></div>
+                    <div><label>&#1605;&#1606; &#1578;&#1575;&#1585;&#1610;&#1582;</label><input type="date" name="start" value="<?php echo esc_attr($f['start']); ?>"></div>
+                    <div><label>&#1573;&#1604;&#1609; &#1578;&#1575;&#1585;&#1610;&#1582;</label><input type="date" name="end" value="<?php echo esc_attr($f['end']); ?>"></div>
+                    <div><label>&#1585;&#1602;&#1605; &#1575;&#1604;&#1591;&#1604;&#1576;</label><input type="text" name="order" value="<?php echo esc_attr($f['order'] ?: ''); ?>" style="width:110px"></div>
+                    <div><label>&#1575;&#1604;&#1581;&#1575;&#1604;&#1577; &#1575;&#1604;&#1581;&#1575;&#1604;&#1610;&#1577; &#1604;&#1604;&#1591;&#1604;&#1576;</label>
                         <select name="ostatus">
-                            <option value="">كل الحالات</option>
+                            <option value="">&#1603;&#1604; &#1575;&#1604;&#1581;&#1575;&#1604;&#1575;&#1578;</option>
                             <?php foreach ($labels as $slug => $label) : ?>
                                 <option value="<?php echo esc_attr($slug); ?>" <?php selected($f['status'], $slug); ?>><?php echo esc_html($label); ?></option>
                             <?php endforeach; ?>
                         </select></div>
-                    <button type="submit" class="mu-btn">عرض</button>
-                    <a class="mu-btn ghost" href="<?php echo esc_url(admin_url('admin.php?page=moderator-upsell')); ?>">إعادة تعيين</a>
-                    <a class="mu-btn ghost" href="<?php echo esc_url($export_url); ?>">تصدير CSV</a>
+                    <button type="submit" class="mu-btn">&#1593;&#1585;&#1590;</button>
+                    <a class="mu-btn ghost" href="<?php echo esc_url(admin_url('admin.php?page=moderator-upsell')); ?>">&#1573;&#1593;&#1575;&#1583;&#1577; &#1578;&#1593;&#1610;&#1610;&#1606;</a>
+                    <a class="mu-btn ghost" href="<?php echo esc_url($export_url); ?>">&#1578;&#1589;&#1583;&#1610;&#1585; CSV</a>
                 </form>
             </div>
         </div>
 
         <div class="mu-card">
-            <div class="mu-card-h">ملخص لكل مشرف</div>
+            <div class="mu-card-h">&#1605;&#1604;&#1582;&#1589; &#1604;&#1603;&#1604; &#1605;&#1588;&#1585;&#1601;</div>
             <div class="mu-table-wrap">
             <table class="mu-table">
                 <thead><tr>
-                    <th>المشرف</th><th>عدد الطلبات</th><th>عدد التعديلات</th>
-                    <th>إجمالي الإضافات</th><th>إجمالي النقص</th><th>الصافي</th>
+                    <th>&#1575;&#1604;&#1605;&#1588;&#1585;&#1601;</th><th>&#1593;&#1583;&#1583; &#1575;&#1604;&#1591;&#1604;&#1576;&#1575;&#1578;</th><th>&#1593;&#1583;&#1583; &#1575;&#1604;&#1578;&#1593;&#1583;&#1610;&#1604;&#1575;&#1578;</th>
+                    <th>&#1573;&#1580;&#1605;&#1575;&#1604;&#1610; &#1575;&#1604;&#1573;&#1590;&#1575;&#1601;&#1575;&#1578;</th><th>&#1573;&#1580;&#1605;&#1575;&#1604;&#1610; &#1575;&#1604;&#1606;&#1602;&#1589;</th><th>&#1575;&#1604;&#1589;&#1575;&#1601;&#1610;</th>
                 </tr></thead>
                 <tbody>
                 <?php if (! $sum) : ?>
-                    <tr><td colspan="6" style="text-align:center;padding:30px;color:#787c82">لا توجد بيانات في هذه الفترة.</td></tr>
+                    <tr><td colspan="6" style="text-align:center;padding:30px;color:#787c82">&#1604;&#1575; &#1578;&#1608;&#1580;&#1583; &#1576;&#1610;&#1575;&#1606;&#1575;&#1578; &#1601;&#1610; &#1607;&#1584;&#1607; &#1575;&#1604;&#1601;&#1578;&#1585;&#1577;.</td></tr>
                 <?php else : foreach ($sum as $s) : $net = $s['added'] + $s['removed']; ?>
                     <tr>
                         <td><strong><?php echo esc_html($s['name']); ?></strong></td>
@@ -1430,7 +1464,7 @@ function mat_upsell_report_page() {
                     </tr>
                 <?php endforeach; ?>
                     <tr style="background:#fafafa;font-weight:700">
-                        <td colspan="5">الإجمالي الصافي</td>
+                        <td colspan="5">&#1575;&#1604;&#1573;&#1580;&#1605;&#1575;&#1604;&#1610; &#1575;&#1604;&#1589;&#1575;&#1601;&#1610;</td>
                         <td class="<?php echo $total_net >= 0 ? 'mu-pos' : 'mu-neg'; ?>"><?php echo wc_price($total_net); ?></td>
                     </tr>
                 <?php endif; ?>
@@ -1440,30 +1474,68 @@ function mat_upsell_report_page() {
         </div>
 
         <div class="mu-card">
-            <div class="mu-card-h">تفاصيل التعديلات (<?php echo number_format($total); ?>)</div>
-            <div class="mu-table-wrap">
-            <table class="mu-table">
-                <thead><tr>
-                    <th>المشرف</th><th>الطلب</th><th>حالة الطلب</th><th>المنتج</th>
-                    <th>النوع</th><th>الكمية</th><th>فرق المبلغ</th><th>الوقت</th>
-                </tr></thead>
-                <tbody>
-                <?php if (! $slice) : ?>
-                    <tr><td colspan="8" style="text-align:center;padding:30px;color:#787c82">لا توجد تعديلات.</td></tr>
-                <?php else : foreach ($slice as $r) : ?>
-                    <tr>
-                        <td><?php echo esc_html($r->user_name); ?></td>
-                        <td><a href="<?php echo esc_url(mat_upsell_order_link($r->order_id)); ?>" target="_blank">#<?php echo esc_html($r->order_id); ?></a></td>
-                        <td><span class="mu-pill"><?php echo esc_html(mat_map_status_label($r->order_status)); ?></span></td>
-                        <td><?php echo esc_html($r->product_name); ?></td>
-                        <td><span class="mu-pill <?php echo esc_attr($r->event_type); ?>"><?php echo esc_html(mat_upsell_type_label($r->event_type)); ?></span></td>
-                        <td><?php echo (int) $r->qty_before; ?> ← <?php echo (int) $r->qty_after; ?></td>
-                        <td class="<?php echo $r->amount_delta >= 0 ? 'mu-pos' : 'mu-neg'; ?>"><?php echo wc_price($r->amount_delta); ?></td>
-                        <td><?php echo esc_html(date_i18n('j M Y · H:i', strtotime($r->created_at))); ?></td>
-                    </tr>
-                <?php endforeach; endif; ?>
-                </tbody>
-            </table>
+            <div class="mu-card-h">&#1578;&#1601;&#1575;&#1589;&#1610;&#1604; &#1575;&#1604;&#1578;&#1593;&#1583;&#1610;&#1604;&#1575;&#1578; (<?php echo number_format($total_orders); ?> &#1591;&#1604;&#1576;)</div>
+            <div class="mu-card-b" style="padding-top:8px">
+
+            <?php if (empty($page_order_ids)) : ?>
+                <p style="text-align:center;color:#787c82;padding:20px 0">&#1604;&#1575; &#1578;&#1608;&#1580;&#1583; &#1578;&#1593;&#1583;&#1610;&#1604;&#1575;&#1578;.</p>
+            <?php else : ?>
+                <form id="mu-del-form" method="post" style="display:none">
+                    <?php wp_nonce_field('mat_upsell_delete', 'mat_upsell_nonce'); ?>
+                    <input type="hidden" name="mat_upsell_del_row"   id="mu-del-row-id"   value="">
+                    <input type="hidden" name="mat_upsell_del_order" id="mu-del-order-id" value="">
+                </form>
+
+                <?php foreach ($page_order_ids as $oid) :
+                    $ord_rows     = $by_order[$oid];
+                    $first        = $ord_rows[0];
+                    $net          = array_sum(array_column($ord_rows, 'amount_delta'));
+                    $status_label = mat_map_status_label($first->order_status);
+                    $order_link   = mat_upsell_order_link($oid);
+                    ?>
+                    <div class="mu-order-card" id="mu-order-<?php echo intval($oid); ?>">
+                        <div class="mu-order-summary" onclick="muToggle(this)">
+                            <span class="mu-order-toggle">&#9654;</span>
+                            <a class="mu-order-id" href="<?php echo esc_url($order_link); ?>" target="_blank"
+                               onclick="event.stopPropagation()">#<?php echo intval($oid); ?></a>
+                            <span class="mu-order-meta">&#1605;&#1588;&#1585;&#1601;: <strong><?php echo esc_html($first->user_name); ?></strong></span>
+                            <span class="mu-pill"><?php echo esc_html($status_label); ?></span>
+                            <span class="mu-order-meta"><?php echo count($ord_rows); ?> &#1578;&#1593;&#1583;&#1610;&#1604;</span>
+                            <span class="mu-order-net <?php echo $net >= 0 ? 'mu-pos' : 'mu-neg'; ?>"><?php echo wc_price($net); ?></span>
+                            <?php if (current_user_can('manage_options')) : ?>
+                            <button type="button" class="mu-del-all-btn"
+                                    onclick="event.stopPropagation();muDelOrder(<?php echo intval($oid); ?>)"
+                            >&#1581;&#1584;&#1601; &#1603;&#1604; &#1587;&#1580;&#1604;&#1575;&#1578; &#1607;&#1584;&#1575; &#1575;&#1604;&#1591;&#1604;&#1576;</button>
+                            <?php endif; ?>
+                        </div>
+                        <div class="mu-order-body">
+                            <table class="mu-table">
+                                <thead><tr>
+                                    <th>&#1575;&#1604;&#1605;&#1606;&#1578;&#1580;</th><th>&#1575;&#1604;&#1606;&#1608;&#1593;</th><th>&#1575;&#1604;&#1603;&#1605;&#1610;&#1577;</th><th>&#1601;&#1585;&#1602; &#1575;&#1604;&#1605;&#1576;&#1604;&#1594;</th><th>&#1575;&#1604;&#1608;&#1602;&#1578;</th>
+                                    <?php if (current_user_can('manage_options')) : ?><th></th><?php endif; ?>
+                                </tr></thead>
+                                <tbody>
+                                <?php foreach ($ord_rows as $r) : ?>
+                                    <tr id="mu-row-<?php echo intval($r->id); ?>">
+                                        <td><?php echo esc_html($r->product_name); ?></td>
+                                        <td><span class="mu-pill <?php echo esc_attr($r->event_type); ?>"><?php echo esc_html(mat_upsell_type_label($r->event_type)); ?></span></td>
+                                        <td><?php echo (int) $r->qty_before; ?> &larr; <?php echo (int) $r->qty_after; ?></td>
+                                        <td class="<?php echo $r->amount_delta >= 0 ? 'mu-pos' : 'mu-neg'; ?>"><?php echo wc_price($r->amount_delta); ?></td>
+                                        <td><?php echo esc_html(date_i18n('j M Y H:i', strtotime($r->created_at))); ?></td>
+                                        <?php if (current_user_can('manage_options')) : ?>
+                                        <td><button type="button" class="mu-del-btn"
+                                                onclick="muDelRow(<?php echo intval($r->id); ?>,<?php echo intval($oid); ?>)"
+                                            >&#1581;&#1584;&#1601;</button></td>
+                                        <?php endif; ?>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+
             </div>
             <?php if ($pages > 1) : ?>
                 <div class="mu-pager">
@@ -1472,14 +1544,29 @@ function mat_upsell_report_page() {
                         'format'    => '',
                         'total'     => $pages,
                         'current'   => $page,
-                        'prev_text' => '›',
-                        'next_text' => '‹',
+                        'prev_text' => '&rsaquo;',
+                        'next_text' => '&lsaquo;',
                     ]); ?>
                 </div>
             <?php endif; ?>
         </div>
     </div>
     <script>
+    function muToggle(el) {
+        el.closest('.mu-order-card').classList.toggle('open');
+    }
+    function muDelRow(rowId, orderId) {
+        if (!confirm('\u062d\u0630\u0641 \u0647\u0630\u0627 \u0627\u0644\u0633\u062c\u0644\u061f')) return;
+        document.getElementById('mu-del-row-id').value   = rowId;
+        document.getElementById('mu-del-order-id').value = '';
+        document.getElementById('mu-del-form').submit();
+    }
+    function muDelOrder(orderId) {
+        if (!confirm('\u062d\u0630\u0641 \u062c\u0645\u064a\u0639 \u0633\u062c\u0644\u0627\u062a \u0627\u0644\u0637\u0644\u0628 #' + orderId + '\u061f \u0644\u0627 \u064a\u0645\u0643\u0646 \u0627\u0644\u062a\u0631\u0627\u062c\u0639.')) return;
+        document.getElementById('mu-del-order-id').value = orderId;
+        document.getElementById('mu-del-row-id').value   = '';
+        document.getElementById('mu-del-form').submit();
+    }
     jQuery(function($) {
         var $in = $('#mu_user'), $uid = $('#mu_uid');
         $in.autocomplete({
